@@ -91,14 +91,85 @@ pnpm run dev
 
 ## 生产环境部署
 
-### 1. 构建应用
+### 1. 服务器环境准备
+
+#### 系统要求
+- **操作系统**: Ubuntu 20.04+ / CentOS 8+ / RHEL 8+
+- **CPU**: 2核心以上
+- **内存**: 4GB以上
+- **存储**: 20GB可用空间
+- **网络**: 公网IP和域名（可选）
+
+#### 安装必要软件
 
 ```bash
-# 安装生产依赖
-pnpm install --production
+# 更新系统
+sudo apt update && sudo apt upgrade -y
 
-# 构建应用
-pnpm run build
+# 安装 Node.js 18+
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# 安装 PM2
+sudo npm install -g pm2
+
+# 安装 MySQL
+sudo apt install mysql-server -y
+sudo mysql_secure_installation
+
+# 安装 Nginx（可选，用于反向代理）
+sudo apt install nginx -y
+
+# 安装 Git
+sudo apt install git -y
+```
+
+#### 防火墙配置
+
+```bash
+# 启用防火墙
+sudo ufw enable
+
+# 允许SSH
+sudo ufw allow ssh
+
+# 允许HTTP和HTTPS
+sudo ufw allow 80
+sudo ufw allow 443
+
+# 允许应用端口（3005）
+sudo ufw allow 3005
+
+# 查看防火墙状态
+sudo ufw status
+```
+
+### 2. 项目部署
+
+#### 克隆项目到服务器
+
+```bash
+# 创建项目目录
+sudo mkdir -p /mnt/data/quanmin
+sudo chown $USER:$USER /mnt/data/quanmin
+
+# 克隆项目
+cd /mnt/data/quanmin
+git clone <your-repository-url> energy-dashboard-main
+cd energy-dashboard-main
+```
+
+#### 安装依赖和构建
+
+```bash
+# 安装依赖
+npm install
+
+# 构建应用（生产环境）
+npm run build
+
+# 或者开发环境直接启动
+# npm run start:dev
 ```
 
 ### 2. 启动生产服务器
@@ -112,31 +183,89 @@ npm install -g pm2
 pm2 start ecosystem.config.js
 ```
 
-### 3. PM2 配置文件
+### 3. PM2 部署配置
+
+#### 方法一：使用 ecosystem.config.js 配置文件（推荐）
 
 创建 `ecosystem.config.js`：
 
 ```javascript
 module.exports = {
   apps: [{
-    name: 'roi-dashboard',
-    script: 'server.js',
-    instances: 'max',
-    exec_mode: 'cluster',
+    name: 'Dash',
+    script: 'npm',
+    args: 'run start:dev',
+    cwd: '/mnt/data/quanmin/energy-dashboard-main',
+    instances: 1,
+    exec_mode: 'fork',
     env: {
-      NODE_ENV: 'production',
-      PORT: 3000
+      NODE_ENV: 'development',
+      PORT: 3005
     },
     env_production: {
       NODE_ENV: 'production',
-      PORT: 3000
+      PORT: 3005
     },
     error_file: './logs/err.log',
     out_file: './logs/out.log',
     log_file: './logs/combined.log',
-    time: true
+    time: true,
+    autorestart: true,
+    watch: false,
+    max_memory_restart: '1G'
   }]
 };
+```
+
+启动命令：
+```bash
+pm2 start ecosystem.config.js
+```
+
+#### 方法二：直接使用命令行启动
+
+```bash
+# 开发环境启动（端口3005）
+PORT=3005 pm2 start npm --name "Dash" -- run start:dev --prefix /mnt/data/quanmin/energy-dashboard-main
+
+# 生产环境启动
+PORT=3005 pm2 start npm --name "Dash" -- run start --prefix /mnt/data/quanmin/energy-dashboard-main
+```
+
+#### PM2 常用管理命令
+
+```bash
+# 查看所有进程
+pm2 list
+
+# 查看进程详情
+pm2 show Dash
+
+# 查看日志
+pm2 logs Dash
+
+# 重启应用
+pm2 restart Dash
+
+# 停止应用
+pm2 stop Dash
+
+# 删除应用
+pm2 delete Dash
+
+# 重载应用（零停机时间）
+pm2 reload Dash
+
+# 监控
+pm2 monit
+
+# 保存当前进程列表
+pm2 save
+
+# 开机自启动
+pm2 startup
+pm2 save
+```
 ```
 
 ## 数据库配置
@@ -506,7 +635,197 @@ gzip $BACKUP_DIR/db_backup_$DATE.sql
 find $BACKUP_DIR -name "db_backup_*.sql.gz" -mtime +7 -delete
 ```
 
+### 3. 环境变量配置
+
+创建生产环境配置文件：
+
+```bash
+# 创建环境变量文件
+cp .env.example .env.production
+
+# 编辑生产环境配置
+nano .env.production
+```
+
+生产环境配置示例：
+```env
+# 数据库配置
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=30TasH2i!@#
+DB_NAME=energy_dashboard
+
+# 应用配置
+NODE_ENV=production
+PORT=3005
+NEXTAUTH_SECRET=your-production-secret-key
+NEXTAUTH_URL=http://your-domain.com:3005
+
+# 安全配置
+SSL_ENABLED=false
+CORS_ORIGIN=http://your-domain.com:3005
+```
+
+### 4. 启动应用
+
+```bash
+# 使用PM2启动应用
+PORT=3005 pm2 start npm --name "Dash" -- run start:dev --prefix /mnt/data/quanmin/energy-dashboard-main
+
+# 或使用配置文件启动
+pm2 start ecosystem.config.js
+
+# 设置开机自启动
+pm2 startup
+pm2 save
+```
+
+### 5. Nginx反向代理配置（可选）
+
+创建Nginx配置文件：
+
+```bash
+sudo nano /etc/nginx/sites-available/energy-dashboard
+```
+
+配置内容：
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    location / {
+        proxy_pass http://localhost:3005;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+```
+
+启用配置：
+```bash
+# 启用站点
+sudo ln -s /etc/nginx/sites-available/energy-dashboard /etc/nginx/sites-enabled/
+
+# 测试配置
+sudo nginx -t
+
+# 重启Nginx
+sudo systemctl restart nginx
+```
+
 ## 故障排除
+
+### PM2 相关问题
+
+#### 1. 应用启动失败
+
+```bash
+# 查看详细错误日志
+pm2 logs Dash --lines 50
+
+# 查看进程状态
+pm2 list
+
+# 重启应用
+pm2 restart Dash
+```
+
+#### 2. 端口占用问题
+
+```bash
+# 查看端口占用
+sudo netstat -tlnp | grep :3005
+# 或
+sudo lsof -i :3005
+
+# 杀死占用进程
+sudo kill -9 <PID>
+
+# 重新启动应用
+pm2 restart Dash
+```
+
+#### 3. 内存不足
+
+```bash
+# 查看内存使用
+free -h
+pm2 monit
+
+# 设置内存限制
+pm2 start ecosystem.config.js --max-memory-restart 1G
+```
+
+#### 4. 权限问题
+
+```bash
+# 检查文件权限
+ls -la /mnt/data/quanmin/energy-dashboard-main
+
+# 修改权限
+sudo chown -R $USER:$USER /mnt/data/quanmin/energy-dashboard-main
+sudo chmod -R 755 /mnt/data/quanmin/energy-dashboard-main
+```
+
+### 数据库连接问题
+
+#### 1. 连接被拒绝
+
+```bash
+# 检查MySQL服务状态
+sudo systemctl status mysql
+
+# 启动MySQL服务
+sudo systemctl start mysql
+
+# 测试数据库连接
+mysql -u root -p -h localhost
+```
+
+#### 2. 权限问题
+
+```sql
+-- 创建数据库用户
+CREATE USER 'dash'@'localhost' IDENTIFIED BY '30TasHi!@#';
+GRANT ALL PRIVILEGES ON energy_dashboard.* TO 'dash'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+### 网络和防火墙问题
+
+#### 1. 端口无法访问
+
+```bash
+# 检查防火墙状态
+sudo ufw status
+
+# 开放端口
+sudo ufw allow 3005
+
+# 检查应用是否监听端口
+sudo netstat -tlnp | grep :3005
+```
+
+#### 2. 域名解析问题
+
+```bash
+# 测试域名解析
+nslookup your-domain.com
+
+# 测试网络连接
+ping your-domain.com
+
+# 检查本地hosts文件
+cat /etc/hosts
+```
 
 ### 常见问题
 
@@ -592,6 +911,111 @@ module.exports = {
           }
         ]
       }
+    ];
+  }
+};
+```
+
+## 部署检查清单
+
+### 部署前检查
+
+- [ ] 服务器环境准备完成（Node.js, PM2, MySQL, Git）
+- [ ] 防火墙配置正确（端口3005已开放）
+- [ ] 数据库服务正常运行
+- [ ] 项目代码已克隆到指定目录
+- [ ] 环境变量配置文件已创建
+- [ ] 依赖包安装完成
+- [ ] 数据库连接测试通过
+
+### 部署后验证
+
+- [ ] PM2进程状态正常
+- [ ] 应用端口监听正常（3005）
+- [ ] 网页可以正常访问
+- [ ] 数据库操作功能正常
+- [ ] 日志输出正常
+- [ ] 内存使用在合理范围内
+- [ ] 开机自启动配置完成
+
+### 验证命令
+
+```bash
+# 检查PM2状态
+pm2 list
+pm2 logs Dash --lines 20
+
+# 检查端口监听
+sudo netstat -tlnp | grep :3005
+
+# 检查应用响应
+curl http://localhost:3005
+
+# 检查系统资源
+free -h
+df -h
+
+# 检查防火墙
+sudo ufw status
+```
+
+## 最佳实践
+
+### 1. 安全配置
+
+```bash
+# 定期更新系统
+sudo apt update && sudo apt upgrade
+
+# 配置SSH密钥认证
+ssh-keygen -t ed25519
+# 禁用密码登录（可选）
+
+# 设置强密码策略
+# 定期备份数据库
+```
+
+### 2. 监控和告警
+
+```bash
+# 安装系统监控工具
+sudo apt install htop iotop
+
+# 配置PM2监控
+pm2 install pm2-server-monit
+
+# 设置日志轮转
+pm2 install pm2-logrotate
+pm2 set pm2-logrotate:max_size 10M
+pm2 set pm2-logrotate:retain 7
+```
+
+### 3. 备份策略
+
+```bash
+# 数据库备份脚本
+#!/bin/bash
+DATE=$(date +%Y%m%d_%H%M%S)
+mysqldump -u root -p energy_dashboard > /backup/energy_dashboard_$DATE.sql
+
+# 代码备份
+tar -czf /backup/energy-dashboard_$DATE.tar.gz /mnt/data/quanmin/energy-dashboard-main
+
+# 设置定时备份
+crontab -e
+# 添加：0 2 * * * /path/to/backup-script.sh
+```
+
+### 4. 性能调优
+
+```bash
+# PM2集群模式（生产环境推荐）
+pm2 start ecosystem.config.js --env production
+
+# 启用gzip压缩
+# 配置CDN加速
+# 数据库查询优化
+# 静态资源缓存
     ];
   }
 };
